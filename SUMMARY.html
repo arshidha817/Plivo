@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaky Network - System Summary</title>
+  <style>
+    :root { color-scheme: light; --ink: #162033; --muted: #526074; --line: #d9e0eb; --accent: #1769aa; --panel: #f5f8fc; }
+    body { max-width: 900px; margin: 0 auto; padding: 44px 24px; font: 16px/1.6 system-ui, sans-serif; color: var(--ink); }
+    h1 { margin-bottom: 0; } h2 { margin-top: 2em; } .sub { color: var(--muted); margin-top: .2em; }
+    .flow { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); text-align: center; font-weight: 650; }
+    code { background: var(--panel); padding: 2px 5px; border-radius: 4px; } table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px; text-align: left; border-bottom: 1px solid var(--line); } th { background: var(--panel); }
+  </style>
+</head>
+<body>
+  <h1>Reliable low-latency UDP playout</h1>
+  <p class="sub">Flaky Network systems assignment - two-frame XOR forward-error correction</p>
+  <p>This system-level summary was created by a coding agent from the implementation and the recorded experiment results.</p>
+
+  <h2>Architecture</h2>
+  <div class="flow">Harness source :47010 → sender :47001 → hostile relay :47002 → receiver :47020 → harness player</div>
+  <p>The harness produces one 160-byte payload every 20 ms. The relay can drop, delay, duplicate, and reorder UDP packets. The player accepts a frame only when the correct sequence number and payload arrive before that frame's playout deadline.</p>
+
+  <h2>Sender</h2>
+  <p>The sender binds UDP port 47010 and reads the harness format: a four-byte big-endian sequence number followed by a 160-byte payload. It immediately transmits a data packet to the relay so normal frames take only one relay crossing. For each pair of consecutive frames, it calculates the bytewise XOR of their payloads and transmits one additional parity packet after the second frame arrives. It uses only standard C socket interfaces and talks only to the relay media port.</p>
+  <p>Data packets contain a packet-type byte, the original sequence number, and the payload. Parity packets contain a packet-type byte, the pair's first sequence number, and the 160-byte XOR value. The sender does not use a side channel or direct process-to-process communication.</p>
+
+  <h2>Receiver</h2>
+  <p>The receiver binds UDP port 47002 and maintains bounded slots indexed by two-frame block base sequence number. A directly received frame is stored and forwarded to the harness player on port 47020 immediately. Duplicate data packets are ignored after the first copy, so relay duplication does not cause repeated work or alter recovery state.</p>
+  <p>When the receiver has a parity packet and exactly one missing data frame in the pair, it reconstructs the missing payload by XORing the parity value with the received payload. It then emits the recovered frame in the exact harness format. Because the reconstruction is based on explicit sequence numbers, packets may arrive in either order without corrupting the frame mapping.</p>
+
+  <h2>Trade-offs and timing</h2>
+  <p>One parity packet for every two data packets gives a measured upstream overhead of 1.55x, below the 2.0x limit. It can recover one loss in a pair, including a dropped data packet or a delayed packet that misses its deadline. It cannot recover two losses in the same pair, or simultaneous loss of a data packet and its parity packet.</p>
+  <p>A parity packet is available only after the second frame of a pair is produced, 20 ms after the first. With profile B's delay range of up to 80 ms, a lost first frame can require roughly 100 ms before its recovery packet reaches the receiver. This is why lower delay settings become unreliable even though the code forwards direct data immediately.</p>
+
+  <h2>Measured result and grading choice</h2>
+  <table>
+    <thead><tr><th>Delay</th><th>Profile / seed</th><th>Worst observed misses</th><th>Overhead</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>100 ms</td><td>A/1, B/1, B/2, B/3</td><td>0.87%</td><td>1.55x</td><td>All valid</td></tr>
+      <tr><td>97 ms</td><td>B/2</td><td>1.00%</td><td>1.55x</td><td>At the limit</td></tr>
+      <tr><td>96 ms</td><td>B/1</td><td>1.07%</td><td>1.55x</td><td>Invalid</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Recommended grading delay: 100 ms.</strong> It is the lowest tested delay that remained valid across all tested profile/seed combinations while retaining margin below the 1.00% miss-rate cap.</p>
+</body>
+</html>
